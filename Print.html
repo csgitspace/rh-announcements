@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <style>
+    :root{ --purple:#63419A; --dark:#4A2F78; --lav:#AC9AC9; --tint:#F3F0F8; --grey:#636263;
+           --ink:#231C2E; --body:22px; }
+    *{box-sizing:border-box}
+    body{ margin:0; background:#F6F5F8; color:var(--ink);
+          font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+    .tools{ background:var(--purple); padding:12px 20px; display:flex; gap:10px; align-items:center;
+            flex-wrap:wrap; }
+    .tools span{ color:#DDD3EC; font-size:13px; margin-right:auto; }
+    .tools button{ border:0; border-radius:999px; padding:9px 20px; font:inherit; font-size:14px;
+                   font-weight:600; background:#fff; color:var(--purple); cursor:pointer; }
+    .tools button.ghost{ background:transparent; color:#fff; border:1px solid rgba(255,255,255,.55); }
+    .tools button:hover{ opacity:.88; }
+
+    .sheet{ max-width:7.4in; margin:26px auto; background:#fff; padding:0.55in 0.6in 0.5in;
+            box-shadow:0 2px 14px rgba(99,65,154,.14); border-radius:10px; }
+
+    .head{ display:flex; align-items:center; gap:14px; border-bottom:3px solid var(--purple);
+           padding-bottom:12px; margin-bottom:22px; }
+    .head img{ height:38px; }
+    .head .t{ font-size:13px; letter-spacing:.09em; color:var(--purple); }
+    .head .r{ margin-left:auto; font-size:12px; color:var(--grey); }
+
+    .dates{ display:flex; border:3px solid var(--purple); border-radius:12px; margin-bottom:26px; }
+    .dates div{ flex:1; padding:14px 18px; }
+    .dates div + div{ border-left:2px solid var(--lav); }
+    .dates .k{ font-size:11px; letter-spacing:.1em; color:var(--purple); margin-bottom:5px; }
+    .dates .v{ font-size:21px; font-weight:700; line-height:1.2; }
+    .dates .v.none{ color:var(--grey); font-weight:600; }
+
+    .read{ font-family:Georgia,"Times New Roman",serif; font-size:var(--body); line-height:1.65;
+           white-space:pre-wrap; }
+
+    .foot{ margin-top:34px; padding-top:12px; border-top:1px solid #E7E1F0; font-size:12.5px;
+           color:var(--grey); display:flex; gap:16px; flex-wrap:wrap; }
+
+    .miss{ padding:30px; font-size:16px; color:var(--grey); }
+
+    @media print{
+      @page{ size:letter; margin:0.6in; }
+      body{ background:#fff; }
+      .tools{ display:none; }
+      .sheet{ box-shadow:none; margin:0; padding:0; max-width:none; border-radius:0; }
+      .dates{ border-color:#000; }
+      .read{ font-size:var(--body); }
+    }
+  </style>
+</head>
+<body>
+
+<div class="tools">
+  <span>Hand this to whoever reads announcements.</span>
+  <button type="button" class="ghost" onclick="bump(-2)">Smaller type</button>
+  <button type="button" class="ghost" onclick="bump(2)">Bigger type</button>
+  <button type="button" onclick="window.print()">Print</button>
+</div>
+
+<div class="sheet" id="sheet"></div>
+
+<script>
+  var D = <?!= data ?>;
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+
+  if (D.error) {
+    document.getElementById('sheet').innerHTML = '<div class="miss">' + esc(D.error) +
+      ' Open it from the dashboard instead.</div>';
+  } else {
+    var where = D.locations.replace('Other', D.otherLocation ? 'Other: ' + D.otherLocation : 'Other');
+    document.getElementById('sheet').innerHTML =
+      '<div class="head">' +
+        '<img src="https://files.smartsites.parentsquare.com/4898/img_pd_102121_mxvilf.png" alt="Royalton-Hartland">' +
+        '<div class="t">ANNOUNCEMENT</div>' +
+        '<div class="r">' + esc(D.id) + '</div>' +
+      '</div>' +
+
+      '<div class="dates">' +
+        '<div><div class="k">STARTS</div><div class="v' + (D.start ? '' : ' none') + '">' +
+          esc(D.start || 'Right away') + '</div></div>' +
+        '<div><div class="k">ENDS</div><div class="v' + (D.expire ? '' : ' none') + '">' +
+          esc(D.expire || 'No end date given') + '</div></div>' +
+      '</div>' +
+
+      '<div class="read">' + esc(D.content) + '</div>' +
+
+      '<div class="foot">' +
+        '<span>Submitted by ' + esc(D.name) + '</span>' +
+        '<span>' + esc(D.email) + '</span>' +
+        '<span>' + esc(where) + '</span>' +
+      '</div>';
+    document.title = D.id + ' — Announcement';
+  }
+
+  function bump(n){
+    var el = document.documentElement;
+    var cur = parseInt(getComputedStyle(el).getPropertyValue('--body'), 10) || 22;
+    el.style.setProperty('--body', Math.min(40, Math.max(14, cur + n)) + 'px');
+  }
+</script>
+</body>
+</html>
