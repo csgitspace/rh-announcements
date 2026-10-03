@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <?!= include('Styles') ?>
+</head>
+<body>
+
+<div class="bar">
+  <div class="bar-in">
+    <img src="https://files.smartsites.parentsquare.com/4898/img_pd_102121_mxvilf.png" alt="Royalton-Hartland">
+    <h1>Announcements to post</h1>
+    <span class="who"><?= userEmail ?> &nbsp;·&nbsp; <a id="newLink" href="#">Submit one</a></span>
+  </div>
+</div>
+
+<div class="wrap">
+  <div id="err" class="err hidden"></div>
+
+  <div class="toolbar">
+    <input type="text" id="q" placeholder="Search text, submitter, or ID">
+    <select id="statusFilter">
+      <option value="open">To post</option>
+      <option value="done">Posted</option>
+      <option value="all">Everything</option>
+    </select>
+    <select id="locFilter"><option value="">All locations</option></select>
+    <select id="scope" class="hidden">
+      <option value="mine">Assigned to me</option>
+      <option value="all">Whole district</option>
+    </select>
+  </div>
+
+  <div id="list"><div class="card quiet">Loading…</div></div>
+  <div class="pager hidden" id="pager"></div>
+</div>
+
+<script>
+  var DATA = { items: [] }, PAGE = 1, PER = 30, FOCUS = '<?= focusId ?>';
+
+  function run(fn){
+    var args = [].slice.call(arguments,1);
+    return new Promise(function(res,rej){
+      google.script.run.withSuccessHandler(res).withFailureHandler(rej)[fn].apply(null,args);
+    });
+  }
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+
+  load('mine');
+
+  function load(scope){
+    run('getDashboard', { scope: scope }).then(function(d){
+      DATA = d;
+      $('newLink').href = d.formUrl;
+      if (d.isAdmin) $('scope').classList.remove('hidden');
+      var locs = {};
+      d.items.forEach(function(i){ locs[i.location] = 1; });
+      $('locFilter').innerHTML = '<option value="">All locations</option>' +
+        Object.keys(locs).sort().map(function(l){ return '<option>' + esc(l) + '</option>'; }).join('');
+      if (FOCUS) { $('q').value = FOCUS; $('statusFilter').value = 'all'; FOCUS = ''; }
+      render();
+    }).catch(fail);
+  }
+
+  ['q','statusFilter','locFilter'].forEach(function(id){
+    $(id).addEventListener('input', function(){ PAGE = 1; render(); });
+  });
+  $('scope').addEventListener('change', function(){ PAGE = 1; load(this.value); });
+
+  function filtered(){
+    var q = $('q').value.trim().toLowerCase();
+    var st = $('statusFilter').value;
+    var loc = $('locFilter').value;
+    return DATA.items.filter(function(i){
+      if (st === 'open' && i.status === 'Posted') return false;
+      if (st === 'done' && i.status !== 'Posted') return false;
+      if (loc && i.location !== loc) return false;
+      if (!q) return true;
+      return (i.content + ' ' + i.name + ' ' + i.id + ' ' + i.location + ' ' + i.otherLocation)
+        .toLowerCase().indexOf(q) > -1;
+    });
+  }
+
+  function render(){
+    var rows = filtered();
+    var pages = Math.max(1, Math.ceil(rows.length / PER));
+    if (PAGE > pages) PAGE = pages;
+    var slice = rows.slice((PAGE-1)*PER, PAGE*PER);
+
+    if (!rows.length) {
+      $('list').innerHTML = '<div class="card"><div class="eyebrow">Nothing here</div>' +
+        '<p class="lede">No announcements match those filters. When a teacher submits one for your locations, ' +
+        'it lands here and in your email.</p></div>';
+      $('pager').classList.add('hidden');
+      return;
+    }
+
+    $('list').innerHTML = slice.map(card).join('');
+    if (pages > 1) {
+      $('pager').classList.remove('hidden');
+      $('pager').innerHTML =
+        '<button class="btn ghost sm" type="button" onclick="go(' + (PAGE-1) + ')"' + (PAGE===1?' disabled':'') + '>Back</button>' +
+        '<span class="quiet">Page ' + PAGE + ' of ' + pages + ' · ' + rows.length + ' items</span>' +
+        '<button class="btn ghost sm" type="button" onclick="go(' + (PAGE+1) + ')"' + (PAGE===pages?' disabled':'') + '>Next</button>';
+    } else {
+      $('pager').classList.add('hidden');
+    }
+  }
+
+  function go(p){ PAGE = p; render(); window.scrollTo({top:0,behavior:'smooth'}); }
+
+  function card(i){
+    var done = i.status === 'Posted';
+    var pill = done ? '<span class="pill done">Posted</span>' : '<span class="pill todo">To post</span>';
+    var other = (i.location === 'Other' && i.otherLocation)
+      ? ' <span class="quiet">(' + esc(i.otherLocation) + ')</span>' : '';
+
+    var actions = done
+      ? '<button class="btn ghost sm" type="button" onclick="reopen(\'' + i.taskId + '\')">Mark it back to do</button>'
+      : '<button class="btn sm" type="button" onclick="post(\'' + i.taskId + '\')">Mark posted</button>';
+
+    var media = i.fileNames
+      ? '<div class="row" style="margin-top:12px">' +
+          '<button class="btn ghost sm" type="button" onclick="zip(\'' + i.id + '\',this)">Download media</button>' +
+          '<button class="btn ghost sm" type="button" onclick="thumbs(\'' + i.id + '\',\'' + i.taskId + '\',this)">Show media</button>' +
+          '<span class="quiet">' + esc(i.fileNames) + '</span></div>' +
+        '<div class="thumbs" id="t-' + i.taskId + '"></div>'
+      : '<div class="quiet" style="margin-top:12px">No media attached.</div>';
+
+    return '<div class="card" id="c-' + i.taskId + '">' +
+      '<div class="row" style="justify-content:space-between; margin-bottom:10px">' +
+        '<div><b>' + esc(i.location) + '</b>' + other +
+          '<div class="quiet">' + esc(i.name) + ' · ' + esc(i.id) + '</div></div>' + pill + '</div>' +
+      '<div class="ann">' + esc(i.content) + '</div>' +
+      '<div class="quiet" style="margin-top:10px">Runs ' + esc(i.start || 'as soon as possible') +
+        (i.expire ? ' through ' + esc(i.expire) : '') + '</div>' +
+      (i.links ? '<div class="quiet" style="margin-top:4px">Links: ' + esc(i.links) + '</div>' : '') +
+      media +
+      '<div class="row" style="margin-top:16px">' + actions +
+        '<a class="btn ghost sm" href="' + DATA.formUrl + '?page=print&id=' + encodeURIComponent(i.id) + '" target="_blank">Print</a>' +
+        (i.pdfUrl ? '<a class="btn ghost sm" href="' + i.pdfUrl + '" target="_blank">PDF summary</a>' : '') +
+        (i.folderUrl ? '<a class="btn ghost sm" href="' + i.folderUrl + '" target="_blank">Drive folder</a>' : '') +
+        '<a class="btn ghost sm" href="mailto:' + esc(i.email) + '?subject=' + encodeURIComponent('Re: ' + i.id) + '">Email ' + esc(i.name.split(' ')[0]) + '</a>' +
+      '</div>' +
+      (done && i.postedBy ? '<div class="quiet" style="margin-top:10px">Posted by ' + esc(i.postedBy) +
+        (i.postedAt ? ' on ' + esc(i.postedAt) : '') + '</div>' : '') +
+    '</div>';
+  }
+
+  function post(taskId){
+    var note = prompt('Anything worth noting? (optional)') || '';
+    run('markPosted', taskId, note).then(function(){ refresh(); }).catch(fail);
+  }
+  function reopen(taskId){
+    run('reopenTask', taskId).then(function(){ refresh(); }).catch(fail);
+  }
+  function refresh(){ load($('scope').value || 'mine'); }
+
+  function zip(id, btn){
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin" style="border-color:rgba(99,65,154,.3);border-top-color:#63419A"></span>Zipping';
+    run('zipMedia', id).then(function(url){
+      btn.disabled = false; btn.textContent = 'Download media';
+      window.open(url, '_blank');
+    }).catch(function(e){
+      btn.disabled = false; btn.textContent = 'Download media';
+      fail(e);
+    });
+  }
+
+  function thumbs(id, taskId, btn){
+    var wrap = $('t-' + taskId);
+    if (wrap.innerHTML) { wrap.innerHTML = ''; btn.textContent = 'Show media'; return; }
+    btn.textContent = 'Loading…';
+    run('getMedia', id).then(function(files){
+      btn.textContent = 'Hide media';
+      wrap.innerHTML = files.map(function(f){
+        return '<a href="' + f.download + '" title="' + esc(f.name) + '">' +
+          (/image/.test(f.mime) ? '<img src="' + f.preview + '" alt="' + esc(f.name) + '">'
+            : '<span class="btn ghost sm">' + esc(f.name) + '</span>') + '</a>';
+      }).join('');
+    }).catch(fail);
+  }
+
+  function fail(e){
+    var el = $('err');
+    el.textContent = (e && e.message) ? e.message : e;
+    el.classList.remove('hidden');
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+</script>
+</body>
+</html>
