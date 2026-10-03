@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <?!= include('Styles') ?>
+</head>
+<body>
+
+<div class="bar">
+  <div class="bar-in">
+    <img src="https://files.smartsites.parentsquare.com/4898/img_pd_102121_mxvilf.png" alt="Royalton-Hartland">
+    <h1>Submit an announcement</h1>
+    <span class="who"><?= userEmail ?></span>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div id="formView">
+    <div class="card">
+      <p class="lede">Submit your announcement below. Please give plenty of time for your announcement
+        to get posted.</p>
+    </div>
+
+    <div id="err" class="err hidden"></div>
+
+    <div class="card">
+      <label class="field" for="name">Your name</label>
+      <input type="text" id="name" autocomplete="name">
+
+      <div style="height:18px"></div>
+
+      <label class="field" for="content">Announcement</label>
+      <p class="hint">Write it the way you want it read or displayed.</p>
+      <textarea id="content" placeholder="The Drama Club's spring musical is Friday at 7 p.m. in the auditorium. Tickets are $5 at the door."></textarea>
+      <div class="quiet" style="margin-top:6px"><span id="count">0</span> characters</div>
+    </div>
+
+    <div class="card">
+      <label class="field">Where should this be posted?</label>
+      <p class="hint">Pick every place that applies. Each one goes to a different person.</p>
+      <div class="checks" id="locs"></div>
+      <div id="otherWrap" class="hidden" style="margin-top:12px">
+        <label class="field" for="other">Where else?</label>
+        <input type="text" id="other" placeholder="Marquee sign, staff bulletin, district website…">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="grid2">
+        <div>
+          <label class="field" for="start">Start date</label>
+          <p class="hint">First day it should appear.</p>
+          <input type="date" id="start">
+        </div>
+        <div>
+          <label class="field" for="expire">Expire date</label>
+          <p class="hint">Last day it should appear.</p>
+          <input type="date" id="expire">
+        </div>
+      </div>
+      <div id="leadNote" class="note hidden"></div>
+    </div>
+
+    <div class="card">
+      <label class="field">Media</label>
+      <p class="hint" id="mediaHint">JPG or PNG images and PDFs. Anything headed for a TV should be landscape.</p>
+
+      <div class="drop" id="drop" tabindex="0" role="button">
+        <b>Choose files</b> or drag them here
+        <div class="quiet" style="margin-top:4px">Up to <span id="maxMb">20</span> MB each</div>
+      </div>
+      <input type="file" id="picker" multiple class="hidden" accept=".jpg,.jpeg,.png,.gif,.pdf">
+      <div class="files" id="fileList"></div>
+      <div id="orientNote" class="note hidden"></div>
+
+      <div style="height:18px"></div>
+      <label class="field" for="links">Video or Drive links</label>
+      <p class="hint">For anything too big to upload.</p>
+      <input type="text" id="links" placeholder="https://…">
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <button class="btn" id="submit" type="button">Send it</button>
+        <span class="quiet" id="status"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="doneView" class="hidden">
+    <div class="card" style="text-align:center">
+      <div class="eyebrow">Sent</div>
+      <h2 style="margin-bottom:10px">Your announcement is on its way</h2>
+      <p class="lede" id="doneMsg"></p>
+      <div class="row" style="justify-content:center; margin-top:18px">
+        <a class="btn ghost sm" id="donePdf" href="#" target="_blank">Open the PDF summary</a>
+        <a class="btn ghost sm" id="doneFolder" href="#" target="_blank">Open the media folder</a>
+        <button class="btn sm" type="button" onclick="location.reload()">Submit another</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  var CFG = null, DRAFT = null, FILES = [], BUSY = false;
+
+  function run(fn){
+    var args = [].slice.call(arguments,1);
+    return new Promise(function(res,rej){
+      google.script.run.withSuccessHandler(res).withFailureHandler(rej)[fn].apply(null,args);
+    });
+  }
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s||'').replace(/[&<>"]/g,function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+
+  run('getFormBootstrap').then(function(cfg){
+    CFG = cfg;
+    $('name').value = cfg.guessName;
+    $('maxMb').textContent = cfg.maxFileMb;
+    $('locs').innerHTML = cfg.locations.map(function(l,i){
+      return '<label class="check" data-name="'+esc(l.name)+'">'+
+        '<input type="checkbox" value="'+esc(l.name)+'" data-i="'+i+'">'+
+        '<span><b>'+esc(l.name)+'</b>'+(l.notes?'<small>'+esc(l.notes)+'</small>':'')+'</span></label>';
+    }).join('');
+    Array.prototype.forEach.call(document.querySelectorAll('.check input'), function(cb){
+      cb.addEventListener('change', onLocChange);
+    });
+  }).catch(showErr);
+
+  run('startDraft').then(function(id){ DRAFT = id; }).catch(showErr);
+
+  function onLocChange(){
+    Array.prototype.forEach.call(document.querySelectorAll('.check'), function(el){
+      el.classList.toggle('on', el.querySelector('input').checked);
+    });
+    var picked = chosen();
+    $('otherWrap').classList.toggle('hidden', picked.indexOf('Other') < 0);
+    checkLead(); checkOrientation();
+  }
+  function chosen(){
+    return Array.prototype.slice.call(document.querySelectorAll('.check input:checked'))
+      .map(function(i){ return i.value; });
+  }
+  function needsLandscape(){
+    return chosen().some(function(n){ return /TV|Social/i.test(n); });
+  }
+
+  $('content').addEventListener('input', function(){ $('count').textContent = this.value.length; });
+  $('start').addEventListener('change', checkLead);
+
+  function checkLead(){
+    var v = $('start').value, picked = chosen();
+    var note = $('leadNote');
+    if (!v || !picked.length) { note.classList.add('hidden'); return; }
+    var needs = picked.filter(function(n){ return !/Morning/i.test(n); });
+    if (!needs.length) { note.classList.add('hidden'); return; }
+    var days = Math.round((new Date(v + 'T12:00:00') - new Date()) / 86400000);
+    if (days < CFG.defaultLeadDays) {
+      note.innerHTML = 'That start date is soon. The people who post to ' + esc(needs.join(', ')) +
+        ' may not have time to get it up by then. You can still send it — they will see the date.';
+      note.classList.remove('hidden');
+    } else { note.classList.add('hidden'); }
+  }
+
+  function checkOrientation(){
+    var note = $('orientNote');
+    var portrait = FILES.filter(function(f){ return f.portrait; });
+    if (needsLandscape() && portrait.length) {
+      note.innerHTML = portrait.map(function(f){ return esc(f.name); }).join(', ') +
+        ' ' + (portrait.length > 1 ? 'are' : 'is') + ' taller than wide. Display screens are landscape, so it will letterbox.';
+      note.classList.remove('hidden');
+    } else { note.classList.add('hidden'); }
+  }
+
+  // ---- uploads -----------------------------------------------------------
+  var drop = $('drop'), picker = $('picker');
+  drop.addEventListener('click', function(){ picker.click(); });
+  drop.addEventListener('keydown', function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); picker.click(); }});
+  ['dragenter','dragover'].forEach(function(ev){
+    drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add('hot'); });
+  });
+  ['dragleave','drop'].forEach(function(ev){
+    drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.remove('hot'); });
+  });
+  drop.addEventListener('drop', function(e){ addFiles(e.dataTransfer.files); });
+  picker.addEventListener('change', function(){ addFiles(this.files); picker.value=''; });
+
+  function addFiles(list){
+    Array.prototype.forEach.call(list, function(f){
+      var ext = f.name.split('.').pop().toLowerCase();
+      if (CFG.allowedExt.indexOf(ext) < 0) return showErr(f.name + ' is a .' + ext + ' file. Use ' + CFG.allowedExt.join(', ') + '.');
+      if (f.size > CFG.maxFileMb * 1048576) return showErr(f.name + ' is larger than ' + CFG.maxFileMb + ' MB. Put it in Drive and paste the link instead.');
+      var item = { name:f.name, size:f.size, pct:0, file:f, id:null, portrait:false, key:'k'+Date.now()+Math.random().toString(36).slice(2,7) };
+      FILES.push(item);
+      measure(item);
+      renderFiles();
+      upload(item);
+    });
+  }
+
+  function measure(item){
+    if (!/^image\//.test(item.file.type)) return;
+    var url = URL.createObjectURL(item.file);
+    var img = new Image();
+    img.onload = function(){
+      item.portrait = img.height > img.width;
+      item.thumb = url;
+      renderFiles(); checkOrientation();
+    };
+    img.src = url;
+  }
+
+  function toB64(blob){
+    return new Promise(function(res,rej){
+      var r = new FileReader();
+      r.onload = function(){ res(r.result.split(',')[1]); };
+      r.onerror = rej;
+      r.readAsDataURL(blob);
+    });
+  }
+
+  function upload(item){
+    var CH = 3 * 1024 * 1024;
+    var total = Math.max(1, Math.ceil(item.file.size / CH));
+    var i = 0;
+
+    // Drive hiccups are usually gone by the second or third try.
+    function attempt(fn, tries){
+      return fn().catch(function(e){
+        if (tries <= 1) throw e;
+        return new Promise(function(r){ setTimeout(r, 1200); }).then(function(){
+          return attempt(fn, tries - 1);
+        });
+      });
+    }
+
+    function next(){
+      if (i >= total) {
+        return attempt(function(){
+          return run('finishFile', DRAFT, item.key, item.name, item.file.type || 'application/octet-stream', total);
+        }, 3).then(function(saved){
+          item.id = saved.id; item.pct = 100; item.error = null; renderFiles();
+        }).catch(function(e){ item.error = friendly(e); renderFiles(); });
+      }
+      var slice = item.file.slice(i * CH, (i + 1) * CH);
+      return toB64(slice).then(function(b64){
+        return attempt(function(){ return run('uploadChunk', DRAFT, item.key, i, b64); }, 3);
+      }).then(function(){
+        i++; item.pct = Math.round(i / total * 95); item.error = null; renderFiles(); return next();
+      }).catch(function(e){ item.error = friendly(e); renderFiles(); });
+    }
+    next();
+  }
+
+  function friendly(e){
+    var msg = (e && e.message) ? e.message : String(e);
+    if (/service error|internal error|unavailable|backend/i.test(msg)) {
+      return 'Google Drive hiccuped. Remove this file and add it again.';
+    }
+    return msg;
+  }
+
+  function renderFiles(){
+    $('fileList').innerHTML = FILES.map(function(f, idx){
+      var right = f.error ? '<div class="meta" style="color:#A33">' + esc(f.error) + '</div>'
+        : (f.pct < 100 ? '<div class="prog"><i style="width:' + f.pct + '%"></i></div>'
+        : '<div class="meta">Uploaded' + (f.portrait ? ' · portrait' : '') + '</div>');
+      var img = f.thumb ? '<img src="' + f.thumb + '" alt="">' : '<img alt="">';
+      return '<div class="file">' + img +
+        '<div style="flex:1"><div class="nm">' + esc(f.name) + '</div>' +
+        '<div class="meta">' + (f.size/1024 > 1024 ? (f.size/1048576).toFixed(1)+' MB' : Math.round(f.size/1024)+' KB') + '</div>' +
+        right + '</div>' +
+        '<button class="x" type="button" title="Remove" onclick="dropFile(' + idx + ')">&times;</button></div>';
+    }).join('');
+  }
+
+  function dropFile(i){
+    var f = FILES[i];
+    if (f.id) run('removeDraftFile', DRAFT, f.id);
+    FILES.splice(i,1);
+    renderFiles(); checkOrientation();
+  }
+
+  // ---- submit ------------------------------------------------------------
+  $('submit').addEventListener('click', function(){
+    if (BUSY) return;
+    hideErr();
+    var picked = chosen();
+    if (!$('name').value.trim()) return showErr('Add your name.');
+    if (!$('content').value.trim()) return showErr('Add the announcement text.');
+    if (!picked.length) return showErr('Pick at least one place for this to be posted.');
+    if (picked.indexOf('Other') > -1 && !$('other').value.trim()) return showErr('Tell us where "Other" means.');
+    var pending = FILES.filter(function(f){ return !f.id && !f.error; });
+    if (pending.length) return showErr('Media is still uploading. Give it a moment.');
+
+    BUSY = true;
+    var btn = $('submit');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span>Sending';
+
+    run('submitAnnouncement', {
+      draftId: DRAFT,
+      name: $('name').value.trim(),
+      content: $('content').value.trim(),
+      locations: picked,
+      otherLocation: $('other').value.trim(),
+      start: $('start').value,
+      expire: $('expire').value,
+      links: $('links').value.trim()
+    }).then(function(res){
+      $('formView').classList.add('hidden');
+      $('doneView').classList.remove('hidden');
+      $('doneMsg').textContent = res.notified
+        ? 'Reference ' + res.id + '. ' + res.notified + ' ' + (res.notified === 1 ? 'person has' : 'people have') +
+          ' it in their inbox, and a copy is in yours.'
+        : 'Reference ' + res.id + '. Nobody is listed for those locations yet, so the tech office was notified instead.';
+      if (res.pdfUrl) $('donePdf').href = res.pdfUrl; else $('donePdf').classList.add('hidden');
+      if (res.folderUrl) $('doneFolder').href = res.folderUrl; else $('doneFolder').classList.add('hidden');
+      window.scrollTo(0,0);
+    }).catch(function(e){
+      BUSY = false;
+      btn.disabled = false;
+      btn.textContent = 'Send it';
+      showErr(e.message || e);
+    });
+  });
+
+  function showErr(msg){
+    var el = $('err');
+    el.textContent = (msg && msg.message) ? msg.message : msg;
+    el.classList.remove('hidden');
+    window.scrollTo({ top:0, behavior:'smooth' });
+  }
+  function hideErr(){ $('err').classList.add('hidden'); }
+</script>
+</body>
+</html>
